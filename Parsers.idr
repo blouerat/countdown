@@ -17,8 +17,7 @@ Show Error where
 
 export
 data Parser : Type -> Type where
-     Step : Parser Char
-     Fail : (error : Error) -> Parser ty
+     One : Char -> Parser Char
      Pure : ty -> Parser ty
      Or : (parser1 : Parser a) -> (parser2 : Parser a) -> Parser a
      Loop : Inf (Parser a) -> Parser a
@@ -28,10 +27,6 @@ data Parser : Type -> Type where
 map : (f : a -> b) -> Parser a -> Parser b
 map f parser = do val <- parser
                   Pure (f val)
-
-value : (a -> Char) -> a -> Parser a
-value f val = do c <- Step
-                 if (c == f val) then Pure val else Fail (Invalid c)
 
 optional : (parser : Parser a) -> Parser (Maybe a)
 optional parser = map Just parser `Or` Pure Nothing
@@ -46,11 +41,10 @@ oneOf {k = Z} (x :: []) = x
 oneOf {k = (S k')} (x :: xs) = Or x (oneOf xs)
 
 buildParser : (maxDepth : Nat) -> Parser ty -> StateT String (Either Error) ty
-buildParser _ Step = do input <- get
-                        case strM input of
-                             StrNil => lift (Left EOF)
-                             StrCons x xs => put xs *> pure x
-buildParser _ (Fail error) = lift (Left error)
+buildParser _ (One c) = do input <- get
+                           case strM input of
+                                StrNil => lift (Left EOF)
+                                StrCons x xs => if x == c then put xs *> pure c else lift (Left (Invalid x))
 buildParser _ (Pure val) = pure val
 buildParser n (Or parser1 parser2)
     = do input <- get
@@ -71,13 +65,10 @@ run n parser input = case runStateT (buildParser n parser) input of
                           Right (result, "") => Right result
                           Right (_, input) => Left (Remaining input)
 
-char : Char -> Parser Char
-char = value id
-
 string : String -> Parser String
 string s with (strM s)
   string "" | StrNil = Pure ""
-  string (strCons x xs) | (StrCons _ _) = do x' <- char x
+  string (strCons x xs) | (StrCons _ _) = do x' <- One x
                                              xs' <- assert_total (string xs)
                                              Pure (strCons x' xs')
 
@@ -116,7 +107,10 @@ operatorChar Multiply = '*'
 operatorChar Divide = '/'
 
 operator : Parser Operator
-operator = oneOf (map (value operatorChar) Operators)
+operator = oneOf (map parser Operators)
+  where
+    parser : Operator -> Parser Operator
+    parser op = map (const op) (One (operatorChar op))
 
 export
 data Expression = Number Nat | Brackets Expression | Operation Operator Expression Expression
@@ -136,9 +130,9 @@ mutual
                   Or (operation left) (Pure left)
 
   brackets : Parser Expression
-  brackets = do char '('
+  brackets = do One '('
                 e <- Loop expression
-                char ')'
+                One ')'
                 Pure (Brackets e)
 
   operation : Expression -> Parser Expression
