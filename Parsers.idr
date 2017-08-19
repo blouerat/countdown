@@ -28,14 +28,6 @@ map : (f : a -> b) -> Parser a -> Parser b
 map f parser = do val <- parser
                   Pure (f val)
 
-optional : (parser : Parser a) -> Parser (Maybe a)
-optional parser = map Just parser `Or` Pure Nothing
-
-chain : Parser a -> Parser b -> Parser (a, b)
-chain parserA parserB = do valA <- parserA
-                           valB <- parserB
-                           Pure (valA, valB)
-
 oneOf : Vect (S k) (Parser a) -> Parser a
 oneOf {k = Z} (x :: []) = x
 oneOf {k = (S k')} (x :: xs) = Or x (oneOf xs)
