@@ -2,13 +2,16 @@ module Main
 
 import Parsers
 
-maxDepth : Nat
-maxDepth = 42
+displayError : (error : Error) -> (input : String) -> String
+displayError (MkError _ column message) input =
+    "Nope!\n" ++
+    input ++ "\n" ++
+    pack (replicate (cast column) ' ') ++ "^ " ++ message ++ "\n"
 
 onInput : String -> String
-onInput input = case run maxDepth expression input of
-                     Left err => "Huh, nope: " ++ show err ++ "\n"
-                     Right exp => "Nice one: " ++ show exp ++ "\n"
+onInput input = case run input of
+                     Right expression => "Nice one: " ++ show expression ++ "\n"
+                     Left error => displayError error input
 
 main : IO ()
 main = repl "Enter a valid countdown number expression: " onInput

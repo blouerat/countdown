@@ -4,3 +4,4 @@ modules = Main
         , Parsers
 executable = countdown
 main = Main
+pkgs = contrib

@@ -18,15 +18,21 @@ Type checking ./Main.idr
 Enter a valid countdown number expression: 50 * 10 + 8 * 7
 Nice one: 50 * 10 + 8 * 7
 Enter a valid countdown number expression: ((50 - 7) * 3 + 10) * 8 / 2
-Nice one: ((50 - 7) * 3 + 10) * 8 / 2
+Nice one: 50 - 7 * 3 + 10 * 8 / 2
 Enter a valid countdown number expression: (((((  25  -4)))))*   2
-Nice one: (((((25 - 4))))) * 2
+Nice one: 25 - 4 * 2
 Enter a valid countdown number expression: ()
-Huh, nope: Invalid character: (
+Nope!
+()
+ ^ Unrecognised token
 Enter a valid countdown number expression: 1 +
-Huh, nope: Remaining input: +
+Nope!
+1 +
+  ^ Expected end of input
 Enter a valid countdown number expression: 72
-Huh, nope: Remaining input: 2
+Nope!
+72
+ ^ Expected end of input
 Enter a valid countdown number expression: 75
 Nice one: 75
 Enter a valid countdown number expression: ^C
