@@ -16,24 +16,24 @@ Type checking ./Main.idr
 ```
 > ./countdown
 Enter a valid countdown number expression: 50 * 10 + 8 * 7
-Nice one: 50 * 10 + 8 * 7
+Nice one: 50 * 10 + 8 * 7 = 556
 Enter a valid countdown number expression: ((50 - 7) * 3 + 10) * 8 / 2
-Nice one: 50 - 7 * 3 + 10 * 8 / 2
+Nice one: ((50 - 7) * 3 + 10) * 8 / 2 = 556
 Enter a valid countdown number expression: (((((  25  -4)))))*   2
-Nice one: 25 - 4 * 2
+Nice one: (25 - 4) * 2 = 42
 Enter a valid countdown number expression: ()
 Nope!
 ()
- ^ Unrecognised token
+ ^ Unexpected token: ), expected a number or an opening bracket
 Enter a valid countdown number expression: 1 +
 Nope!
 1 +
-  ^ Expected end of input
+   ^ Unexpected EOF, expected a number or an opening bracket
 Enter a valid countdown number expression: 72
 Nope!
 72
- ^ Expected end of input
+ ^ Unexpected token: 2, expected an operator or a closing bracket
 Enter a valid countdown number expression: 75
-Nice one: 75
+Nice one: 75 = 75
 Enter a valid countdown number expression: ^C
 ```

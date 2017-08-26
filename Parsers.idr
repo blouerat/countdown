@@ -1,38 +1,51 @@
 module Parsers
 
-import Data.Vect
+import Control.Monad.State
 import Text.Lexer
-import Text.Parser
 
-data Token = TkAdd
-           | TkSubstract
-           | TkMultiply
-           | TkDivide
-           | TkSpace Nat
-           | TkNumber Nat
+%default total
+
+data Operator = Add | Subtract | Multiply | Divide
+
+Eq Operator where
+  (==) Add      Add      = True
+  (==) Subtract Subtract = True
+  (==) Multiply Multiply = True
+  (==) Divide   Divide   = True
+  (==) _        _        = False
+
+Show Operator where
+  show Add      = "+"
+  show Subtract = "-"
+  show Multiply = "*"
+  show Divide   = "/"
+
+precedence : Operator -> Nat
+precedence Add      = 0
+precedence Subtract = 0
+precedence Multiply = 1
+precedence Divide   = 1
+
+data Token = TkOperator Operator
+           | TkSpaces
+           | TkNumber Int
            | TkOpenBracket
            | TkCloseBracket
 
 Eq Token where
-  (==) TkAdd TkAdd = True
-  (==) TkSubstract TkSubstract = True
-  (==) TkMultiply TkMultiply = True
-  (==) TkDivide TkDivide = True
-  (==) (TkSpace n1) (TkSpace n2) = n1 == n2
-  (==) (TkNumber n1) (TkNumber n2) = n1 == n2
-  (==) TkOpenBracket TkOpenBracket = True
-  (==) TkCloseBracket TkCloseBracket = True
-  (==) _ _ = False
+  (==) (TkOperator o1) (TkOperator o2) = o1 == o2
+  (==) TkSpaces        TkSpaces        = True
+  (==) (TkNumber n1)   (TkNumber n2)   = n1 == n2
+  (==) TkOpenBracket   TkOpenBracket   = True
+  (==) TkCloseBracket  TkCloseBracket  = True
+  (==) _               _               = False
 
 Show Token where
-  show TkAdd = "+"
-  show TkSubstract = "-"
-  show TkMultiply = "*"
-  show TkDivide = "/"
-  show (TkSpace k) = "\\s"
-  show (TkNumber k) = show k
-  show TkOpenBracket = "("
-  show TkCloseBracket = ")"
+  show (TkOperator op) = show op
+  show TkSpaces        = "\\s"
+  show (TkNumber k)    = show k
+  show TkOpenBracket   = "("
+  show TkCloseBracket  = ")"
 
 showLexer : Token -> (Lexer, String -> Token)
 showLexer token = (exact (show token), const token)
@@ -56,103 +69,170 @@ numberLexer = is '1' <+> maybe (is '0' <+> maybeIs '0') <|>
 
 tokenMap : TokenMap Token
 tokenMap = [
-  showLexer TkAdd,
-  showLexer TkSubstract,
-  showLexer TkMultiply,
-  showLexer TkDivide,
-  (some space, TkSpace . length),
+  showLexer (TkOperator Add),
+  showLexer (TkOperator Subtract),
+  showLexer (TkOperator Multiply),
+  showLexer (TkOperator Divide),
+  (some space, const TkSpaces),
   (numberLexer, TkNumber . cast),
   showLexer TkOpenBracket,
   showLexer TkCloseBracket
 ]
 
 export
-data Operator = Add | Substract | Multiply | Divide
+record Error where
+  constructor MkError
+  position : Int
+  message : String
 
 export
-Show Operator where
-  show Add = "+"
-  show Substract = "-"
-  show Multiply = "*"
-  show Divide = "/"
-
-export
-data Expression = Number Nat | Brackets Expression | Operation Operator Expression Expression
+data Expression = Number Int Int
+                | Brackets Expression Int
+                | Operation Operator Expression Expression Int
 
 export
 Show Expression where
-  show (Number n) = show n
-  show (Brackets e) = "(" ++ show e ++ ")"
-  show (Operation op left right) = show left ++ " " ++ show op ++ " " ++ show right
+  show (Number n pos)         = show n
+  show (Brackets x pos)       = "(" ++ show x ++ ")"
+  show (Operation op l r pos) = show l ++ " " ++ show op ++ " " ++ show r
 
-Parser : Bool -> Type -> Type
-Parser consumes ty = Grammar (TokenData Token) consumes ty
+record Siding where
+       constructor MkSiding
+       base : List (Operator, Int)
+       brackets : List (Int, List (Operator, Int))
 
-number : Parser True Expression
-number = terminal isNumberTk
+record Wye where
+       constructor MkWye
+       output : List Expression
+       siding : Siding
+
+empty : Wye
+empty = MkWye [] (MkSiding [] [])
+
+NonEmptyList : Type -> Type
+NonEmptyList a = (a, List a)
+
+error : Int -> String -> StateT Wye (Either Error) ty
+error pos msg = lift (Left (MkError pos msg))
+
+number : Int -> Int -> StateT Wye (Either Error) ()
+number k pos = modify (record { output $= ((Number k pos) ::) })
+
+openBracket : Int -> StateT Wye (Either Error) ()
+openBracket pos = modify (record { siding -> brackets $= ((pos, []) ::) })
+
+applyOperator : List Expression -> Operator -> Int -> Either Error (List Expression)
+applyOperator (r :: (l :: exps)) op pos = Right (Operation op l r pos :: exps)
+applyOperator _ _ pos = Left (MkError pos "huh, don't know what happened :/")
+
+applyOperators : List Expression -> (Operator, Int) -> List (Operator, Int) -> Either Error (List Expression)
+applyOperators output (op, pos) [] = applyOperator output op pos
+applyOperators output (op, pos) (op' :: ops) = do output' <- applyOperator output op pos
+                                                  applyOperators output' op' ops
+
+topSiding : Wye -> List (Operator, Int)
+topSiding (MkWye output (MkSiding base [])) = base
+topSiding (MkWye output (MkSiding base ((pos, []) :: brackets))) = []
+topSiding (MkWye output (MkSiding base ((pos, ops) :: brackets))) = ops
+
+pushOperator : Operator -> Int -> Wye -> Wye
+pushOperator op pos (MkWye output (MkSiding base [])) = (MkWye output (MkSiding ((op, pos) :: base) []))
+pushOperator op pos (MkWye output (MkSiding base ((bPos, ops) :: brackets))) = (MkWye output (MkSiding base ((bPos, ((op, pos) :: ops)) :: brackets)))
+
+setOperator : Operator -> Int -> Wye -> Wye
+setOperator op pos (MkWye output (MkSiding base [])) = (MkWye output (MkSiding [(op, pos)] []))
+setOperator op pos (MkWye output (MkSiding base ((bPos, ops) :: brackets))) = (MkWye output (MkSiding base ((bPos, [(op, pos)]) :: brackets)))
+
+operator : Operator -> Int -> StateT Wye (Either Error) ()
+operator op pos =
+  do y <- get
+     case topSiding y of
+          [] => modify (pushOperator op pos)
+          ((top, topPos) :: ops) => if precedence op > precedence top
+                                       then modify (pushOperator op pos)
+                                       else case applyOperators (output y) (top, topPos) ops of
+                                                 Left err => lift (Left err)
+                                                 Right output' => modify ((setOperator op pos) . record { output = output'})
+
+wrap : Int -> List Expression -> List Expression
+wrap _ [] = []
+wrap bPos ((Number n pos) :: xs) = Brackets (Number n pos) bPos :: xs
+wrap bPos ((Brackets x _) :: xs) = (Brackets x bPos) :: xs
+wrap bPos ((Operation op l r pos) :: xs) = Brackets (Operation op l r pos) bPos :: xs
+
+closeBracket : Int -> StateT Wye (Either Error) ()
+closeBracket pos =
+  do y <- get
+     case brackets (siding y) of
+          [] => error pos "No matching open bracket"
+          ((pos, []) :: brackets) => modify (record { output $= wrap pos, siding -> brackets = brackets })
+          ((pos, op :: ops) :: brackets) => do output' <- lift (applyOperators (output y) op ops)
+                                               modify (record { output = wrap pos output', siding -> brackets = brackets })
+
+terminate : StateT Wye (Either Error) Expression
+terminate =
+  do y <- get
+     case siding y of
+          (MkSiding [] []) => onlyOne (output y)
+          (MkSiding (op :: ops) []) => do output' <- lift (applyOperators (output y) op ops)
+                                          onlyOne output'
+          (MkSiding _ ((pos, _) :: _)) => error pos "Missing closing bracket"
   where
-    isNumberTk : TokenData Token -> Maybe Expression
-    isNumberTk (MkToken _ _ (TkNumber n)) = Just (Number n)
-    isNumberTk _ = Nothing
-
-exact : Token -> a -> Parser True a
-exact token val = terminal (\tk => toMaybe ((tok tk) == token) val)
-
-brackets : Parser True Expression -> Parser True Expression
-brackets = between (exact TkOpenBracket ()) (exact TkCloseBracket ())
-
-operator : Parser True Operator
-operator = exact TkAdd Add <|>
-           exact TkSubstract Substract <|>
-           exact TkMultiply Multiply <|>
-           exact TkDivide Divide
-
-space : Parser True Token
-space = terminal isSpaceTk
-  where
-    isSpaceTk : TokenData Token -> Maybe Token
-    isSpaceTk (MkToken _ _ (TkSpace n)) = Just (TkSpace n)
-    isSpaceTk _ = Nothing
+    onlyOne : List Expression -> StateT Wye (Either Error) Expression
+    onlyOne [] = error 0 "Nothign left in my stack, that's weird"
+    onlyOne (exp :: []) = pure exp
+    onlyOne (x :: xs) = error 0 "More than one result, odd"
 
 mutual
-  operation : Expression -> Parser True Expression
-  operation left = do op <- operator
-                      commit
-                      right <- expressionRec
-                      pure (Operation op left right)
+  shuntingYard : Int -> List (Token, Int) -> StateT Wye (Either Error) Expression
+  shuntingYard pos [] = error pos "Unexpected EOF, expected a number or an opening bracket"
+  shuntingYard _ ((TkSpaces, pos) :: toks) = shuntingYard (pos + 1) toks
+  shuntingYard _ ((TkNumber k, pos) :: toks) = (number k pos) *> shuntingYard' toks
+  shuntingYard _ ((TkOpenBracket, pos) :: toks) = (openBracket pos) *> shuntingYard (pos + 1) toks
+  shuntingYard _ ((tok, pos) :: _) = error pos ("Unexpected token: " ++ show tok ++ ", expected a number or an opening bracket")
 
-  expressionRec : Parser True Expression
-  expressionRec = do maybe space
-                     left <- number <|> brackets expressionRec
-                     maybe space
-                     optional (operation left) left
+  shuntingYard' : List (Token, Int) -> StateT Wye (Either Error) Expression
+  shuntingYard' [] = terminate
+  shuntingYard' ((TkOperator op, pos) :: toks) = (operator op pos) *> shuntingYard (pos + 1) toks
+  shuntingYard' ((TkSpaces, _) :: toks) = shuntingYard' toks
+  shuntingYard' ((TkCloseBracket, pos) :: toks) = (closeBracket pos) *> shuntingYard' toks
+  shuntingYard' ((tok, pos) :: _) = error pos ("Unexpected token: " ++ show tok ++ ", expected an operator or a closing bracket")
 
-expression : Parser True Expression
-expression = do res <- expressionRec
-                eof
-                pure res
+intDiv : Int -> Int -> Int -> Either Error Int
+intDiv x 0 pos = Left (MkError pos "div by 0")
+intDiv x y pos = if assert_total (mod x y == 0)
+                    then Right (assert_total (div x y))
+                    else Left (MkError pos "not int div")
 
-public export
-record Error where
-  constructor MkError
-  line : Int
-  column : Int
-  message : String
+eval : Expression -> Either Error Int
+eval (Number n _) = Right n
+eval (Brackets exp _) = eval exp
+eval (Operation Add l r _) = liftA2 (+) (eval l) (eval r)
+eval (Operation Subtract l r pos) = do l' <- eval l
+                                       r' <- eval r
+                                       if l' > r'
+                                          then Right (l' - r')
+                                          else Left (MkError pos ("Cannot subtract (" ++ show r ++ " = " ++ show r' ++ ") from (" ++ show l ++ " = " ++ show l' ++ ")"))
+eval (Operation Multiply l r _) = liftA2 (*) (eval l) (eval r)
+eval (Operation Divide l r pos) = do l' <- eval l
+                                     r' <- eval r
+                                     if r' == 0
+                                        then Left (MkError pos ("Cannot divide by (" ++ show r ++ " = 0)"))
+                                        else if assert_total (mod l' r' == 0)
+                                                then Right (assert_total (div l' r'))
+                                                else Left (MkError pos ("Cannot divide (" ++ show l ++ " = " ++ show l' ++ ") by (" ++ show r ++ " = " ++ show r' ++ ")"))
 
-runLex : String -> Either Error (List (TokenData Token))
-runLex input = case lex tokenMap input of
-                    (tokens, (_, _, "")) => Right tokens
-                    (_, (line, col, _)) => Left (MkError line col "Invalid character")
-
-runParse : List (TokenData Token) -> Either Error Expression
-runParse tokens = case parse tokens expression of
-                       (Left error) => Left (parseError error)
-                       (Right (exp, remainder)) => Right exp
+lex : String -> Either Error (List (Token, Int))
+lex input = case lex tokenMap input of
+                 (tokens, (_, _, "")) => Right (map tokenPos tokens)
+                 (_, (_, col, _)) => Left (MkError col "Invalid character")
   where
-    parseError : ParseError (TokenData Token) -> Error
-    parseError (Error msg []) = MkError 0 0 msg
-    parseError (Error msg ((MkToken line col _) :: _)) = MkError line col msg
+    tokenPos : (TokenData Token) -> (Token, Int)
+    tokenPos (MkToken line col tok) = (tok, col)
 
 export
-run : String -> Either Error Expression
-run input = runLex input >>= runParse
+run : String -> Either Error (Expression, Int)
+run input = do tokens <- lex input
+               exp <- map fst (runStateT (shuntingYard 0 tokens) empty)
+               res <- eval exp
+               Right (exp, res)
