@@ -75,15 +75,15 @@ record Error where
   message : String
 
 export
-data Expression = Number Int Int
-                | Brackets Expression Int
-                | Operation Operator Expression Expression Int
+data Expression = Number Int
+                | Brackets Expression
+                | Operation Operator Expression Expression
 
 export
 Show Expression where
-  show (Number n pos)         = show n
-  show (Brackets x pos)       = "(" ++ show x ++ ")"
-  show (Operation op l r pos) = show l ++ " " ++ show op ++ " " ++ show r
+  show (Number n)         = show n
+  show (Brackets x)       = "(" ++ show x ++ ")"
+  show (Operation op l r) = show l ++ " " ++ show op ++ " " ++ show r
 
 record Siding where
        constructor MkSiding
@@ -109,24 +109,24 @@ validNumbers = [1..10] ++ [25, 50, 75, 100]
 
 number : Int -> Int -> StateT Wye (Either Error) ()
 number k pos = if elem k validNumbers
-                  then modify (record { output $= ((Number k pos, k) ::) })
+                  then modify (record { output $= ((Number k, k) ::) })
                   else error pos ("Invalid number " ++ show k ++ ", expected one of: " ++ show validNumbers)
 
 openBracket : Int -> StateT Wye (Either Error) ()
 openBracket pos = modify (record { siding -> brackets $= ((pos, []) ::) })
 
 applyOperator : List (Expression, Int) -> Operator -> Int -> Either Error (List (Expression, Int))
-applyOperator ((r, r') :: ((l, l') :: exps)) Add pos = Right ((Operation Add l r pos, l' + r') :: exps)
+applyOperator ((r, r') :: ((l, l') :: exps)) Add _ = Right ((Operation Add l r, l' + r') :: exps)
 applyOperator ((r, r') :: ((l, l') :: exps)) Subtract pos =
   if l' > r'
-     then Right ((Operation Subtract l r pos, l' - r') :: exps)
+     then Right ((Operation Subtract l r, l' - r') :: exps)
      else Left (MkError pos ("Cannot subtract (" ++ show r ++ " = " ++ show r' ++ ") from (" ++ show l ++ " = " ++ show l' ++ ")"))
-applyOperator ((r, r') :: ((l, l') :: exps)) Multiply pos = Right ((Operation Multiply l r pos, l' * r') :: exps)
+applyOperator ((r, r') :: ((l, l') :: exps)) Multiply _ = Right ((Operation Multiply l r, l' * r') :: exps)
 applyOperator ((r, r') :: ((l, l') :: exps)) Divide pos =
   if r' == 0
     then Left (MkError pos ("Cannot divide by (" ++ show r ++ " = 0)"))
     else if assert_total (mod l' r' == 0)
-            then Right ((Operation Divide l r pos, assert_total (div l' r')) :: exps)
+            then Right ((Operation Divide l r, assert_total (div l' r')) :: exps)
             else Left (MkError pos ("Cannot divide (" ++ show l ++ " = " ++ show l' ++ ") by (" ++ show r ++ " = " ++ show r' ++ ")"))
 applyOperator _ _ pos = Left (MkError pos "huh, don't know what happened :/")
 
@@ -159,20 +159,20 @@ operator op pos =
                                                  Left err => lift (Left err)
                                                  Right output' => modify ((setOperator op pos) . record { output = output'})
 
-wrap : Int -> List (Expression, Int) -> List (Expression, Int)
-wrap _ [] = []
-wrap bPos ((Number n pos, res) :: xs) = (Brackets (Number n pos) bPos, res) :: xs
-wrap bPos ((Brackets x _, res) :: xs) = (Brackets x bPos, res) :: xs
-wrap bPos ((Operation op l r pos, res) :: xs) = (Brackets (Operation op l r pos) bPos, res) :: xs
+wrap : List (Expression, Int) -> List (Expression, Int)
+wrap [] = []
+wrap ((Number n, res) :: xs) = (Brackets (Number n), res) :: xs
+wrap ((Brackets x, res) :: xs) = (Brackets x, res) :: xs
+wrap ((Operation op l r, res) :: xs) = (Brackets (Operation op l r), res) :: xs
 
 closeBracket : Int -> StateT Wye (Either Error) ()
 closeBracket pos =
   do y <- get
      case brackets (siding y) of
           [] => error pos "No matching open bracket"
-          ((pos, []) :: brackets) => modify (record { output $= wrap pos, siding -> brackets = brackets })
+          ((pos, []) :: brackets) => modify (record { output $= wrap, siding -> brackets = brackets })
           ((pos, op :: ops) :: brackets) => do output' <- lift (applyOperators (output y) op ops)
-                                               modify (record { output = wrap pos output', siding -> brackets = brackets })
+                                               modify (record { output = wrap output', siding -> brackets = brackets })
 
 terminate : StateT Wye (Either Error) (Expression, Int)
 terminate =
