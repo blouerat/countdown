@@ -56,17 +56,6 @@ maybe l = l <|> empty
 maybeIs : Char -> Recognise False
 maybeIs = maybe . is
 
-numberLexer : Lexer
-numberLexer = is '1' <+> maybe (is '0' <+> maybeIs '0') <|>
-              is '2' <+> maybeIs '5' <|>
-              is '3' <|>
-              is '4' <|>
-              is '5' <+> maybeIs '0' <|>
-              is '6' <|>
-              is '7' <+> maybeIs '5' <|>
-              is '8' <|>
-              is '9'
-
 tokenMap : TokenMap Token
 tokenMap = [
   showLexer (TkOperator Add),
@@ -74,7 +63,7 @@ tokenMap = [
   showLexer (TkOperator Multiply),
   showLexer (TkOperator Divide),
   (some space, const TkSpaces),
-  (numberLexer, TkNumber . cast),
+  (digits, TkNumber . cast),
   showLexer TkOpenBracket,
   showLexer TkCloseBracket
 ]
@@ -115,8 +104,13 @@ NonEmptyList a = (a, List a)
 error : Int -> String -> StateT Wye (Either Error) ty
 error pos msg = lift (Left (MkError pos msg))
 
+validNumbers : List Int
+validNumbers = [1..10] ++ [25, 50, 75, 100]
+
 number : Int -> Int -> StateT Wye (Either Error) ()
-number k pos = modify (record { output $= ((Number k pos) ::) })
+number k pos = if elem k validNumbers
+                  then modify (record { output $= ((Number k pos) ::) })
+                  else error pos ("Invalid number " ++ show k ++ ", expected one of: " ++ show validNumbers)
 
 openBracket : Int -> StateT Wye (Either Error) ()
 openBracket pos = modify (record { siding -> brackets $= ((pos, []) ::) })
