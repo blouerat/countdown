@@ -177,20 +177,25 @@ terminate =
     onlyOne (exp :: []) = pure exp
     onlyOne (x :: xs) = error 0 "More than one result, odd"
 
+eofError : Int -> StateT Wye (Either Error) ty
+eofError lastPos = error (lastPos + 1) "Unexpected EOF, expected a number or an opening bracket"
+
 mutual
-  shuntingYard : Int -> List (Token, Int) -> StateT Wye (Either Error) Expression
-  shuntingYard pos [] = error pos "Unexpected EOF, expected a number or an opening bracket"
-  shuntingYard _ ((TkSpaces, pos) :: toks) = shuntingYard (pos + 1) toks
-  shuntingYard _ ((TkNumber k, pos) :: toks) = (number k pos) *> shuntingYard' toks
-  shuntingYard _ ((TkOpenBracket, pos) :: toks) = (openBracket pos) *> shuntingYard (pos + 1) toks
-  shuntingYard _ ((tok, pos) :: _) = error pos ("Unexpected token: " ++ show tok ++ ", expected a number or an opening bracket")
+  shuntingYard : (Token, Int) -> List (Token, Int) -> StateT Wye (Either Error) Expression
+  shuntingYard (TkSpaces, pos)      []            = eofError pos
+  shuntingYard (TkSpaces, pos)      (tok :: toks) = shuntingYard tok toks
+  shuntingYard (TkNumber k, pos)    toks          = (number k pos) *> shuntingYard' toks
+  shuntingYard (TkOpenBracket, pos) []            = eofError pos
+  shuntingYard (TkOpenBracket, pos) (tok :: toks) = (openBracket pos) *> shuntingYard tok toks
+  shuntingYard (tok, pos)           _             = error pos ("Unexpected token: " ++ show tok ++ ", expected a number or an opening bracket")
 
   shuntingYard' : List (Token, Int) -> StateT Wye (Either Error) Expression
-  shuntingYard' [] = terminate
-  shuntingYard' ((TkOperator op, pos) :: toks) = (operator op pos) *> shuntingYard (pos + 1) toks
-  shuntingYard' ((TkSpaces, _) :: toks) = shuntingYard' toks
-  shuntingYard' ((TkCloseBracket, pos) :: toks) = (closeBracket pos) *> shuntingYard' toks
-  shuntingYard' ((tok, pos) :: _) = error pos ("Unexpected token: " ++ show tok ++ ", expected an operator or a closing bracket")
+  shuntingYard' []                                    = terminate
+  shuntingYard' ((TkOperator _, pos) :: [])           = eofError pos
+  shuntingYard' ((TkOperator op, pos) :: tok :: toks) = (operator op pos) *> shuntingYard tok toks
+  shuntingYard' ((TkSpaces, _) :: toks)               = shuntingYard' toks
+  shuntingYard' ((TkCloseBracket, pos) :: toks)       = (closeBracket pos) *> shuntingYard' toks
+  shuntingYard' ((tok, pos) :: _)                     = error pos ("Unexpected token: " ++ show tok ++ ", expected an operator or a closing bracket")
 
 intDiv : Int -> Int -> Int -> Either Error Int
 intDiv x 0 pos = Left (MkError pos "div by 0")
@@ -216,9 +221,11 @@ eval (Operation Divide l r pos) = do l' <- eval l
                                                 then Right (assert_total (div l' r'))
                                                 else Left (MkError pos ("Cannot divide (" ++ show l ++ " = " ++ show l' ++ ") by (" ++ show r ++ " = " ++ show r' ++ ")"))
 
-lex : String -> Either Error (List (Token, Int))
+lex : String -> Either Error ((Token, Int), List (Token, Int))
 lex input = case lex tokenMap input of
-                 (tokens, (_, _, "")) => Right (map tokenPos tokens)
+                 (tokens, (_, _, "")) => case map tokenPos tokens of
+                                              [] => Left (MkError 0 "Invalid character")
+                                              tok :: toks => Right (tok, toks)
                  (_, (_, col, _)) => Left (MkError col "Invalid character")
   where
     tokenPos : (TokenData Token) -> (Token, Int)
@@ -226,7 +233,7 @@ lex input = case lex tokenMap input of
 
 export
 run : String -> Either Error (Expression, Int)
-run input = do tokens <- lex input
-               exp <- map fst (runStateT (shuntingYard 0 tokens) empty)
+run input = do (tok, toks) <- lex input
+               exp <- map fst (runStateT (shuntingYard tok toks) empty)
                res <- eval exp
                Right (exp, res)
