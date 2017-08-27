@@ -32,7 +32,7 @@ Nope!
 Enter a valid countdown number expression: 72
 Nope!
 72
- ^ Unexpected token: 2, expected an operator or a closing bracket
+^ Invalid number 72, expected one of: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 25, 50, 75, 100]
 Enter a valid countdown number expression: 75
 Nice one: 75 = 75
 Enter a valid countdown number expression: ^C
