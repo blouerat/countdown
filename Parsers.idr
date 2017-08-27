@@ -92,7 +92,7 @@ record Siding where
 
 record Wye where
        constructor MkWye
-       output : List Expression
+       output : List (Expression, Int)
        siding : Siding
 
 empty : Wye
@@ -109,17 +109,28 @@ validNumbers = [1..10] ++ [25, 50, 75, 100]
 
 number : Int -> Int -> StateT Wye (Either Error) ()
 number k pos = if elem k validNumbers
-                  then modify (record { output $= ((Number k pos) ::) })
+                  then modify (record { output $= ((Number k pos, k) ::) })
                   else error pos ("Invalid number " ++ show k ++ ", expected one of: " ++ show validNumbers)
 
 openBracket : Int -> StateT Wye (Either Error) ()
 openBracket pos = modify (record { siding -> brackets $= ((pos, []) ::) })
 
-applyOperator : List Expression -> Operator -> Int -> Either Error (List Expression)
-applyOperator (r :: (l :: exps)) op pos = Right (Operation op l r pos :: exps)
+applyOperator : List (Expression, Int) -> Operator -> Int -> Either Error (List (Expression, Int))
+applyOperator ((r, r') :: ((l, l') :: exps)) Add pos = Right ((Operation Add l r pos, l' + r') :: exps)
+applyOperator ((r, r') :: ((l, l') :: exps)) Subtract pos =
+  if l' > r'
+     then Right ((Operation Subtract l r pos, l' - r') :: exps)
+     else Left (MkError pos ("Cannot subtract (" ++ show r ++ " = " ++ show r' ++ ") from (" ++ show l ++ " = " ++ show l' ++ ")"))
+applyOperator ((r, r') :: ((l, l') :: exps)) Multiply pos = Right ((Operation Multiply l r pos, l' * r') :: exps)
+applyOperator ((r, r') :: ((l, l') :: exps)) Divide pos =
+  if r' == 0
+    then Left (MkError pos ("Cannot divide by (" ++ show r ++ " = 0)"))
+    else if assert_total (mod l' r' == 0)
+            then Right ((Operation Divide l r pos, assert_total (div l' r')) :: exps)
+            else Left (MkError pos ("Cannot divide (" ++ show l ++ " = " ++ show l' ++ ") by (" ++ show r ++ " = " ++ show r' ++ ")"))
 applyOperator _ _ pos = Left (MkError pos "huh, don't know what happened :/")
 
-applyOperators : List Expression -> (Operator, Int) -> List (Operator, Int) -> Either Error (List Expression)
+applyOperators : List (Expression, Int) -> (Operator, Int) -> List (Operator, Int) -> Either Error (List (Expression, Int))
 applyOperators output (op, pos) [] = applyOperator output op pos
 applyOperators output (op, pos) (op' :: ops) = do output' <- applyOperator output op pos
                                                   applyOperators output' op' ops
@@ -148,11 +159,11 @@ operator op pos =
                                                  Left err => lift (Left err)
                                                  Right output' => modify ((setOperator op pos) . record { output = output'})
 
-wrap : Int -> List Expression -> List Expression
+wrap : Int -> List (Expression, Int) -> List (Expression, Int)
 wrap _ [] = []
-wrap bPos ((Number n pos) :: xs) = Brackets (Number n pos) bPos :: xs
-wrap bPos ((Brackets x _) :: xs) = (Brackets x bPos) :: xs
-wrap bPos ((Operation op l r pos) :: xs) = Brackets (Operation op l r pos) bPos :: xs
+wrap bPos ((Number n pos, res) :: xs) = (Brackets (Number n pos) bPos, res) :: xs
+wrap bPos ((Brackets x _, res) :: xs) = (Brackets x bPos, res) :: xs
+wrap bPos ((Operation op l r pos, res) :: xs) = (Brackets (Operation op l r pos) bPos, res) :: xs
 
 closeBracket : Int -> StateT Wye (Either Error) ()
 closeBracket pos =
@@ -163,7 +174,7 @@ closeBracket pos =
           ((pos, op :: ops) :: brackets) => do output' <- lift (applyOperators (output y) op ops)
                                                modify (record { output = wrap pos output', siding -> brackets = brackets })
 
-terminate : StateT Wye (Either Error) Expression
+terminate : StateT Wye (Either Error) (Expression, Int)
 terminate =
   do y <- get
      case siding y of
@@ -172,7 +183,7 @@ terminate =
                                           onlyOne output'
           (MkSiding _ ((pos, _) :: _)) => error pos "Missing closing bracket"
   where
-    onlyOne : List Expression -> StateT Wye (Either Error) Expression
+    onlyOne : List (Expression, Int) -> StateT Wye (Either Error) (Expression, Int)
     onlyOne [] = error 0 "Nothign left in my stack, that's weird"
     onlyOne (exp :: []) = pure exp
     onlyOne (x :: xs) = error 0 "More than one result, odd"
@@ -181,7 +192,7 @@ eofError : Int -> StateT Wye (Either Error) ty
 eofError lastPos = error (lastPos + 1) "Unexpected EOF, expected a number or an opening bracket"
 
 mutual
-  shuntingYard : (Token, Int) -> List (Token, Int) -> StateT Wye (Either Error) Expression
+  shuntingYard : (Token, Int) -> List (Token, Int) -> StateT Wye (Either Error) (Expression, Int)
   shuntingYard (TkSpaces, pos)      []            = eofError pos
   shuntingYard (TkSpaces, pos)      (tok :: toks) = shuntingYard tok toks
   shuntingYard (TkNumber k, pos)    toks          = (number k pos) *> shuntingYard' toks
@@ -189,37 +200,13 @@ mutual
   shuntingYard (TkOpenBracket, pos) (tok :: toks) = (openBracket pos) *> shuntingYard tok toks
   shuntingYard (tok, pos)           _             = error pos ("Unexpected token: " ++ show tok ++ ", expected a number or an opening bracket")
 
-  shuntingYard' : List (Token, Int) -> StateT Wye (Either Error) Expression
+  shuntingYard' : List (Token, Int) -> StateT Wye (Either Error) (Expression, Int)
   shuntingYard' []                                    = terminate
   shuntingYard' ((TkOperator _, pos) :: [])           = eofError pos
   shuntingYard' ((TkOperator op, pos) :: tok :: toks) = (operator op pos) *> shuntingYard tok toks
   shuntingYard' ((TkSpaces, _) :: toks)               = shuntingYard' toks
   shuntingYard' ((TkCloseBracket, pos) :: toks)       = (closeBracket pos) *> shuntingYard' toks
   shuntingYard' ((tok, pos) :: _)                     = error pos ("Unexpected token: " ++ show tok ++ ", expected an operator or a closing bracket")
-
-intDiv : Int -> Int -> Int -> Either Error Int
-intDiv x 0 pos = Left (MkError pos "div by 0")
-intDiv x y pos = if assert_total (mod x y == 0)
-                    then Right (assert_total (div x y))
-                    else Left (MkError pos "not int div")
-
-eval : Expression -> Either Error Int
-eval (Number n _) = Right n
-eval (Brackets exp _) = eval exp
-eval (Operation Add l r _) = liftA2 (+) (eval l) (eval r)
-eval (Operation Subtract l r pos) = do l' <- eval l
-                                       r' <- eval r
-                                       if l' > r'
-                                          then Right (l' - r')
-                                          else Left (MkError pos ("Cannot subtract (" ++ show r ++ " = " ++ show r' ++ ") from (" ++ show l ++ " = " ++ show l' ++ ")"))
-eval (Operation Multiply l r _) = liftA2 (*) (eval l) (eval r)
-eval (Operation Divide l r pos) = do l' <- eval l
-                                     r' <- eval r
-                                     if r' == 0
-                                        then Left (MkError pos ("Cannot divide by (" ++ show r ++ " = 0)"))
-                                        else if assert_total (mod l' r' == 0)
-                                                then Right (assert_total (div l' r'))
-                                                else Left (MkError pos ("Cannot divide (" ++ show l ++ " = " ++ show l' ++ ") by (" ++ show r ++ " = " ++ show r' ++ ")"))
 
 lex : String -> Either Error ((Token, Int), List (Token, Int))
 lex input = case lex tokenMap input of
@@ -234,6 +221,4 @@ lex input = case lex tokenMap input of
 export
 run : String -> Either Error (Expression, Int)
 run input = do (tok, toks) <- lex input
-               exp <- map fst (runStateT (shuntingYard tok toks) empty)
-               res <- eval exp
-               Right (exp, res)
+               map fst (runStateT (shuntingYard tok toks) empty)
