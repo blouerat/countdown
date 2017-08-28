@@ -2,6 +2,7 @@ package maths
 
 modules = Main
         , Parsers
+        , LazyList
 executable = countdown
 main = Main
 pkgs = contrib

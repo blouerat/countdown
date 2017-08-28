@@ -2,6 +2,7 @@ module Parsers
 
 import Control.Monad.State
 import Text.Lexer
+import LazyList
 
 %default total
 
@@ -98,19 +99,44 @@ record Wye where
 empty : Wye
 empty = MkWye [] (MkSiding [] [])
 
-NonEmptyList : Type -> Type
-NonEmptyList a = (a, List a)
-
 error : Int -> String -> StateT Wye (Either Error) ty
 error pos msg = lift (Left (MkError pos msg))
 
 validNumbers : List Int
 validNumbers = [1..10] ++ [25, 50, 75, 100]
 
+numbers : Expression -> LazyList Int
+numbers (Number i) = [i]
+numbers (Brackets x) = numbers x
+numbers (Operation _ l r) = append (numbers l) (numbers r)
+
+allNumbers : List (Expression, Int) -> LazyList Int
+allNumbers = foldl (\acc => append acc . numbers . fst) Nil
+
+countMaxN : Nat -> List (Expression, Int) -> Int -> Error -> Either Error Int
+countMaxN max xs k err = if length (take max (filter (== k) (allNumbers xs))) < max
+                            then Right k
+                            else Left err
+
+once : List (Expression, Int) -> Int -> Int -> Either Error Int
+once xs k pos = countMaxN 1 xs k (MkError pos ("Number " ++ show k ++ " has already been used"))
+
+twice : List (Expression, Int) -> Int -> Int -> Either Error Int
+twice xs k pos = countMaxN 2 xs k (MkError pos ("Number " ++ show k ++ " has already been used twice"))
+
+validateNumber : List (Expression, Int) -> Int -> Int -> Either Error Int
+validateNumber xs k pos =
+  if elem k [1..10]
+     then twice xs k pos
+     else if elem k [25, 50, 75, 100]
+             then once xs k pos
+             else Left (MkError pos ("Invalid number " ++ show k ++ ", expected one of: " ++ show validNumbers))
+
 number : Int -> Int -> StateT Wye (Either Error) ()
-number k pos = if elem k validNumbers
-                  then modify (record { output $= ((Number k, k) ::) })
-                  else error pos ("Invalid number " ++ show k ++ ", expected one of: " ++ show validNumbers)
+number k pos = do y <- get
+                  case validateNumber (output y) k pos of
+                       Left err => lift (Left err)
+                       Right k' => modify (record { output $= ((Number k', k') ::) })
 
 openBracket : Int -> StateT Wye (Either Error) ()
 openBracket pos = modify (record { siding -> brackets $= ((pos, []) ::) })
